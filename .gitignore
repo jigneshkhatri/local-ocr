@@ -1,0 +1,10 @@
+models/
+cache/
+Samples/Input/
+Samples/Output/
+.history/
+
+__pycache__/
+*.py[cod]
+
+.env
