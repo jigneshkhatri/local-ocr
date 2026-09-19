@@ -1,11 +1,10 @@
 import json
-import os
 import shutil
 import socket
 import sys
 import traceback
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pipeline import create_pipeline, process_pdf
 
@@ -13,6 +12,20 @@ from pipeline import create_pipeline, process_pdf
 SOCKET_PATH = Path("/run/ocr/ocr.sock")
 OUTPUT_DIR = Path("/output")
 SCRATCH_DIR = Path("/tmp")
+
+
+def resolve_output_dir(subdir: str) -> Path:
+    subdir = subdir or ""
+
+    if PurePosixPath(subdir).is_absolute():
+        raise ValueError("output_subdir must be relative")
+
+    candidate = (OUTPUT_DIR / subdir).resolve()
+
+    if candidate != OUTPUT_DIR and OUTPUT_DIR not in candidate.parents:
+        raise ValueError("output_subdir escapes the output root")
+
+    return candidate
 
 
 def recv_exact(conn: socket.socket, n: int) -> bytes:
@@ -62,6 +75,14 @@ def handle(conn: socket.socket, pipeline):
         )
         return
 
+    try:
+        output_dir = resolve_output_dir(header.get("output_subdir", ""))
+    except ValueError as exc:
+        conn.sendall(
+            (json.dumps({"ok": False, "error": str(exc)}) + "\n").encode("utf-8")
+        )
+        return
+
     scratch_dir = SCRATCH_DIR / uuid.uuid4().hex
     scratch_dir.mkdir(parents=True, exist_ok=True)
     scratch_path = scratch_dir / filename
@@ -69,7 +90,7 @@ def handle(conn: socket.socket, pipeline):
     try:
         scratch_path.write_bytes(data)
 
-        ok = process_pdf(pipeline, scratch_path, OUTPUT_DIR)
+        ok = process_pdf(pipeline, scratch_path, output_dir)
 
         conn.sendall(
             (json.dumps({"ok": ok}) + "\n").encode("utf-8")

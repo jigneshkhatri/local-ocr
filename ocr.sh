@@ -69,25 +69,39 @@ OUTPUT_ABS="$(realpath "$OUTPUT")"
 
 # ------------------------------------------------------------
 # Fast path: if a long-lived daemon (started via ocr-server.sh) is
-# running with a matching OUTPUT_ABS, stream each PDF to it over
-# `docker exec` instead of paying a full model-reload cost via
-# `docker run`.
+# running and OUTPUT_ABS lives under its mounted output root, stream
+# each PDF to it over `docker exec` instead of paying a full
+# model-reload cost via `docker run`. Multiple pipelines can share one
+# daemon this way, each pointed at its own subdirectory of the root.
 # ------------------------------------------------------------
 
 DAEMON_RUNNING="$(docker inspect -f '{{.State.Running}}' "$DAEMON_NAME" 2>/dev/null || true)"
 
 if [[ "$DAEMON_RUNNING" == "true" ]]; then
-    DAEMON_OUTPUT="$(docker inspect -f '{{ index .Config.Labels "ocr.output_dir" }}' "$DAEMON_NAME" 2>/dev/null || true)"
+    DAEMON_ROOT="$(docker inspect -f '{{ index .Config.Labels "ocr.output_root" }}' "$DAEMON_NAME" 2>/dev/null || true)"
 else
-    DAEMON_OUTPUT=""
+    DAEMON_ROOT=""
 fi
 
-if [[ "$DAEMON_RUNNING" == "true" && "$DAEMON_OUTPUT" == "$OUTPUT_ABS" ]]; then
+USE_DAEMON=0
+OUTPUT_SUBDIR=""
+
+if [[ -n "$DAEMON_ROOT" ]]; then
+    REL="$(realpath --relative-to="$DAEMON_ROOT" "$OUTPUT_ABS")"
+
+    if [[ "$REL" != ".." && "$REL" != ../* ]]; then
+        USE_DAEMON=1
+        OUTPUT_SUBDIR="$REL"
+        [[ "$OUTPUT_SUBDIR" == "." ]] && OUTPUT_SUBDIR=""
+    fi
+fi
+
+if [[ "$USE_DAEMON" -eq 1 ]]; then
     echo "LocalOCR (daemon)"
     echo "-----------------"
     echo "Container: $DAEMON_NAME"
     echo "Input:     $INPUT_ABS"
-    echo "Output:    $OUTPUT_ABS"
+    echo "Output:    $OUTPUT_ABS (root: $DAEMON_ROOT, subdir: ${OUTPUT_SUBDIR:-<root>})"
     echo
 
     PDFS=()
@@ -120,7 +134,10 @@ if [[ "$DAEMON_RUNNING" == "true" && "$DAEMON_OUTPUT" == "$OUTPUT_ABS" ]]; then
     for pdf in "${PDFS[@]}"; do
         echo
         echo "Processing: $pdf"
-        if ! docker exec -i "$DAEMON_NAME" python /app/client.py --filename "$(basename "$pdf")" < "$pdf"; then
+        if ! docker exec -i "$DAEMON_NAME" python /app/client.py \
+            --filename "$(basename "$pdf")" \
+            --output-subdir "$OUTPUT_SUBDIR" \
+            < "$pdf"; then
             FAILED=1
         fi
     done

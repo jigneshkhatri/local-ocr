@@ -36,6 +36,13 @@ def parse_args():
         help="Original filename (used to name the output subdirectory).",
     )
 
+    parser.add_argument(
+        "--output-subdir",
+        default="",
+        help="Path, relative to the daemon's mounted output root, to write "
+             "results under (e.g. 'serviceA'). Defaults to the root itself.",
+    )
+
     return parser.parse_args()
 
 
@@ -49,7 +56,11 @@ def main():
         print("ERROR: no PDF data received on stdin.", file=sys.stderr)
         return 1
 
-    header = json.dumps({"filename": filename, "size": len(data)}) + "\n"
+    header = json.dumps({
+        "filename": filename,
+        "size": len(data),
+        "output_subdir": args.output_subdir,
+    }) + "\n"
 
     try:
         conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

@@ -9,13 +9,16 @@ DAEMON_NAME="ocr-daemon"
 usage() {
     cat <<EOF
 Usage:
-  $(basename "$0") start OUTPUT_DIR
+  $(basename "$0") start OUTPUT_ROOT
   $(basename "$0") stop
   $(basename "$0") status
 
 Runs a long-lived OCR container with all models loaded once in memory.
-'ocr.sh' automatically uses the daemon (fast path) when it is running and
-its OUTPUT_DIR matches, and falls back to a one-shot container otherwise.
+OUTPUT_ROOT is mounted once and shared by every pipeline/service that
+uses the daemon — each just passes its own subdirectory under it to
+'ocr.sh' (e.g. OUTPUT_ROOT/serviceA, OUTPUT_ROOT/serviceB). 'ocr.sh'
+automatically uses the daemon (fast path) for any OUTPUT under
+OUTPUT_ROOT, and falls back to a one-shot container otherwise.
 EOF
 }
 
@@ -35,7 +38,7 @@ cmd_start() {
 
     docker rm -f "$DAEMON_NAME" >/dev/null 2>&1 || true
 
-    echo "Starting $DAEMON_NAME (output: $OUTPUT_ABS)..."
+    echo "Starting $DAEMON_NAME (output root: $OUTPUT_ABS)..."
 
     docker run -d --rm \
         --name "$DAEMON_NAME" \
@@ -51,7 +54,7 @@ cmd_start() {
         -v "$PROJECT_DIR/models:/models:ro" \
         -v "$PROJECT_DIR/cache:/cache:rw" \
         -v "$OUTPUT_ABS:/output:rw" \
-        --label "ocr.output_dir=$OUTPUT_ABS" \
+        --label "ocr.output_root=$OUTPUT_ABS" \
         "$IMAGE" serve
 
     echo "Started. Tail logs with: docker logs -f $DAEMON_NAME"
@@ -67,8 +70,8 @@ cmd_stop() {
 
 cmd_status() {
     if [[ "$(docker inspect -f '{{.State.Running}}' "$DAEMON_NAME" 2>/dev/null || true)" == "true" ]]; then
-        OUTPUT_DIR="$(docker inspect -f '{{ index .Config.Labels "ocr.output_dir" }}' "$DAEMON_NAME")"
-        echo "$DAEMON_NAME is running. Output: $OUTPUT_DIR"
+        OUTPUT_ROOT="$(docker inspect -f '{{ index .Config.Labels "ocr.output_root" }}' "$DAEMON_NAME")"
+        echo "$DAEMON_NAME is running. Output root: $OUTPUT_ROOT"
     else
         echo "$DAEMON_NAME is not running."
     fi

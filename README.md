@@ -176,6 +176,9 @@ is fully offline (`--network none`); the models are never fetched again.
 ./ocr.sh --recursive Samples/Input Samples/Output  # directory, recursive
 ```
 
+`INPUT`/`OUTPUT` can be relative or absolute — no daemon involved, so
+nothing else to know.
+
 ### Daemon (for pipelines processing many files over time)
 
 ```bash
@@ -186,12 +189,45 @@ is fully offline (`--network none`); the models are never fetched again.
 ./ocr-server.sh stop                   # when the pipeline is idle
 ```
 
-The daemon's output directory is fixed at start time (`docker exec`
-can't add new mounts to a running container). `ocr.sh` only takes the
-fast path when the `OUTPUT` you pass it matches the directory the daemon
-was started with; otherwise it falls back to one-shot mode automatically.
-Input needs no matching mount — any host path works, since it's streamed
-in rather than bind-mounted.
+How path matching works here, since it trips people up:
+
+- **Input is never restricted.** It's streamed to the daemon over
+  `docker exec` rather than bind-mounted, so `INPUT` can be *any* path,
+  relative or absolute, anywhere on the host — same as one-shot mode.
+- **Output is checked, not restricted to one exact path.** The directory
+  you pass to `ocr-server.sh start` becomes the daemon's **output root**
+  (its one fixed, writable bind mount — `docker exec` can't add mounts to
+  an already-running container). Every `ocr.sh OUTPUT` is resolved to an
+  absolute path (via `realpath`, same as `start` resolves its argument)
+  and compared against that root: if it's the root itself or any path
+  underneath it, `ocr.sh` takes the daemon fast path and tells the daemon
+  which subdirectory to write into. Otherwise it transparently falls back
+  to one-shot mode. **Relative vs. absolute makes no difference** — both
+  sides are resolved to absolute paths before comparing, so this works
+  identically whether you write `Samples/Output` or
+  `/home/you/LocalOCR/Samples/Output`.
+
+#### Multiple pipelines/services sharing one daemon
+
+One daemon = one model load in GPU memory. If two separate services both
+need their own output location, point them at different subdirectories
+of the same root instead of running two daemons (which would double the
+GPU memory used, since models aren't shared across containers):
+
+```bash
+./ocr-server.sh start /data/ocr-outputs                  # one shared root, one model load
+
+./ocr.sh /home/alice/pipelineA/a.pdf /data/ocr-outputs/serviceA   # service A's own subtree
+./ocr.sh /mnt/incoming/b.pdf         /data/ocr-outputs/serviceB   # service B's own subtree
+```
+
+(Absolute paths above just to make the point that inputs can come from
+anywhere and outputs still only need to share one root — relative paths
+work exactly the same way.)
+
+The daemon also rejects any output subdirectory that would resolve
+outside its root (e.g. via `..`), so one service can't be pointed at
+another's output tree by a malformed path.
 
 ### `ocr.sh` reference
 
@@ -213,21 +249,23 @@ flag for it.
 ### `ocr-server.sh` reference
 
 ```
-ocr-server.sh start OUTPUT_DIR
+ocr-server.sh start OUTPUT_ROOT
 ocr-server.sh stop
 ocr-server.sh status
 ```
 
 | Subcommand | Meaning |
 |---|---|
-| `start OUTPUT_DIR` | Starts the daemon container, loads all models, and fixes its writable output mount to `OUTPUT_DIR`. Fails if a daemon is already running. |
+| `start OUTPUT_ROOT` | Starts the daemon container, loads all models, and mounts `OUTPUT_ROOT` as its shared, writable output root. Fails if a daemon is already running. |
 | `stop` | Stops the daemon container (it runs with `--rm`, so it's removed automatically). |
-| `status` | Prints whether the daemon is running and, if so, which `OUTPUT_DIR` it was started with. |
+| `status` | Prints whether the daemon is running and, if so, which `OUTPUT_ROOT` it was started with. |
 | `-h`, `--help` | Print usage and exit. |
 
-Only `ocr.sh` calls whose `OUTPUT` matches the daemon's `OUTPUT_DIR`
-(compared as absolute paths) take the fast path — everything else falls
-back to one-shot mode.
+`ocr.sh` calls take the fast path when their `OUTPUT` resolves to
+`OUTPUT_ROOT` itself or anything underneath it (compared as absolute
+paths); everything else falls back to one-shot mode. See
+[Multiple pipelines/services sharing one daemon](#multiple-pipelinesservices-sharing-one-daemon)
+above.
 
 ### Output
 
@@ -326,9 +364,9 @@ time. Watch `watch -n 1 nvidia-smi`. If you're processing many files over
 time, use daemon mode — it removes the ~35s reload cost per file.
 
 **Daemon fast path not being used** — `ocr-server.sh status` to confirm
-it's running, and check the `OUTPUT` you're passing to `ocr.sh` matches
-exactly what you passed to `ocr-server.sh start` (compared as absolute
-paths).
+it's running, and check the `OUTPUT` you're passing to `ocr.sh` resolves
+to the daemon's `OUTPUT_ROOT` or a subdirectory of it (compared as
+absolute paths).
 
 ## License
 
