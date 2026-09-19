@@ -144,7 +144,7 @@ repo per model, with names matching the directories listed under
 [Models](#models) below. Download them all with:
 
 ```bash
-pip install -U "huggingface_hub[cli]"
+pip install -U huggingface_hub
 
 mkdir -p models
 for name in \
@@ -153,9 +153,13 @@ for name in \
     PP-OCRv5_server_det PP-OCRv5_server_rec \
     RT-DETR-L_wired_table_cell_det RT-DETR-L_wireless_table_cell_det \
     SLANet_plus SLANeXt_wired UVDoc; do
-    huggingface-cli download "PaddlePaddle/$name" --local-dir "models/$name"
+    hf download "PaddlePaddle/$name" --local-dir "models/$name"
 done
 ```
+
+(`huggingface-cli` was the old command name — recent `huggingface_hub`
+versions renamed it to `hf`, no `[cli]` extra needed. If `hf` isn't found,
+upgrade with `pip install -U huggingface_hub`.)
 
 Each resulting `models/<name>/` should contain `config.json`,
 `inference.json`, `inference.pdiparams` and `inference.yml`. Once this is
